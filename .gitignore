@@ -1,0 +1,6 @@
+__pycache__
+autoencoder.egg-info
+setup.py
+build/
+dist/
+data/
