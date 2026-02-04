@@ -7,9 +7,9 @@ def visualize_reconstruction(model, device, test_loader, num_images=5, path='out
     with torch.no_grad():  # Disable gradient calculation for testing/inference
         for batch in test_loader:
             batch_data = batch.to(device)
-            reconstructed = model(batch_data)
+            encoded, decoded, mu, log_var = model(batch_data)
             batch_data = batch_data.cpu()
-            reconstructed = reconstructed.cpu()
+            reconstructed = decoded.cpu()
             
             fig, axes = plt.subplots(2, num_images, figsize=(5*num_images, 10))
             for i in range(num_images):

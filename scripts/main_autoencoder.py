@@ -1,8 +1,9 @@
 from utils.plotting_utilities import visualize_reconstruction
-from src.autoencoder.model_structure import Autoencoder
 from src.autoencoder.training_autoencoder import train_autoencoder
+
+from src.autoencoder.model_structure import Autoencoder
+from src.autoencoder.vae import VAE
 from src.autoencoder.images_dataset import MicroscopicImages
-from src.perceptual_loss import PerceptualLoss # Import the class you just defined
 import torch.optim as optim
 from torchsummary import summary
 import torch
@@ -20,48 +21,32 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print('device =', DEVICE)
 
 # ### Loss functions
-# mse_loss_fn = nn.MSELoss()
+mse_loss_fn = nn.MSELoss()
 ssim_metric = SSIM(data_range=1.0, gaussian_kernel=True, kernel_size=7)
 
-# def combined_loss(reconstructed, original, device):
-#     ssim_metric.to(device)
-#     mse_loss = 10*mse_loss_fn(reconstructed, original)
-#     ssim_val = ssim_metric(reconstructed, original)
-#     ssim_loss = 1.0 - ssim_val
-#     total_loss = mse_loss + ssim_loss
-#     return total_loss, mse_loss, ssim_loss
-
-### perceptual loss
-RECONSTRUCTION_LOSS_WEIGHT = 0  # Weight for MSE/SSIM
-PERCEPTUAL_LOSS_WEIGHT = 1 # Weight for Perceptual Loss (tune this)
-
-# Perceptual Loss
-perceptual_criterion = PerceptualLoss(device=DEVICE).to(DEVICE)
-
-# --- Combined Loss Function ---
-def combined_loss(outputs, targets, device):
-    # Reconstruction Loss
+# Define a loss function that combines the reconstruction loss (MSE+SSIM) and Kullback-Leibler divergence
+def loss_function(reconstructed, original, device, mu, logvar):
     ssim_metric.to(device)
-    recon_loss = RECONSTRUCTION_LOSS_WEIGHT * ssim_metric(outputs, targets)
+    mse_loss = 10*mse_loss_fn(reconstructed, original)
+    ssim_val = ssim_metric(reconstructed, original)
+    ssim_loss = 1.0 - ssim_val
+    total_recon_loss = mse_loss + ssim_loss
 
-    # Perceptual Loss
-    perc_loss = PERCEPTUAL_LOSS_WEIGHT * perceptual_criterion(outputs, targets)
-
-    # Combine losses
-    total_loss = (recon_loss + perc_loss)
-
-    return total_loss, recon_loss, perc_loss # Return individual components for logging
+    # Compute the Kullback-Leibler divergence between the learned latent variable distribution and a standard Gaussian distribution
+    KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    # Combine the two losses by adding them together and return the result
+    return total_recon_loss + KLD
 
 
 # load model structure
-model=Autoencoder().to(DEVICE)
+model=VAE(device=DEVICE)
 print(summary(model, input_size=(1, 384, 512)))
 
 # Setting training parameters
 RANDOM_SEED= 69
 LEARNING_RATE = 0.0001 # bigger than 0.0001 ends in local minima
 BATCH_SIZE = 16
-NUM_EPOCHS = 1000 # we use early stopping anyway
+NUM_EPOCHS = 100000 # we use early stopping anyway
 OPTIMIZER = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
 torch.manual_seed(RANDOM_SEED)
@@ -89,10 +74,10 @@ trained_model, log_dict=train_autoencoder(NUM_EPOCHS,
                                           DEVICE, 
                                           train_loader, 
                                           val_loader, 
-                                          loss_fn=combined_loss, 
+                                          loss_fn=loss_function, 
                                           skip_epoch_stats=False, 
                                           plot_losses_path='outputs/losses.png', 
-                                          save_model_path='outputs/model_perceptualloss.pt')
+                                          save_model_path='outputs/VAE_model.pt')
 
 
 visualize_reconstruction(model, DEVICE, train_loader, num_images=5, path='outputs/traindataset_reconstruction.png')
@@ -103,7 +88,7 @@ visualize_reconstruction(model, DEVICE, val_loader, num_images=5, path='outputs/
 
 # Copy the folder structure from src_folder to dst_folder
 src_folder = 'data/microscope_images_grayscaled'
-dst_folder = 'outputs/microscope_images_encoded_perceptuallossonly'
+dst_folder = 'outputs/microscope_images_encoded_VAE'
 shutil.copytree(src_folder, dst_folder)
 
 def encode_images(magnification, dst_folder):
@@ -116,11 +101,11 @@ def encode_images(magnification, dst_folder):
     with torch.no_grad():
         for i, data in enumerate(data_loader):
             data = data.to(DEVICE)
-            encoded_image = model(data, get_encoded=True)
-            encoded_image = encoded_image.squeeze(0)  # Remove batch dimension
+            encoded, decoded, mu, log_var = model(data)
+            encoded_image = encoded.squeeze(0)  # Remove batch dimension
 
             # Get the original filename and folder path from the dataset
-            original_path = dataset.images[i]  # Adjust based on your dataset class
+            original_path = dataset.images[i]  
             folder_path, file_name = os.path.split(original_path)
             new_file_name = file_name.replace(".pt", "_encoded.pt")  # Change extension to .pt
 
@@ -137,7 +122,7 @@ encode_images(magnification=40, dst_folder=dst_folder)
 
 # ## plot latent space
 # import matplotlib.pyplot as plt
-# path='outputs/microscope_images_encoded/2024-03-12/basin5/40x/12125430_encoded.pt'
+# path='outputs/microscope_images_encoded_VAE/2024-03-12/basin5/40x/12125430_encoded.pt'
 # image=torch.load(path)
 
 # # Set up the figure and subplots

@@ -4,3 +4,5 @@ setup.py
 build/
 dist/
 data/
+outputs/
+variational_autoencoder.egg-info/
